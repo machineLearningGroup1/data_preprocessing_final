@@ -1,0 +1,84 @@
+======================================================================
+数据预处理升级版 v2 — Student Dropout Dataset
+改动：列名清洗 / 特征工程 / 去冗余 / Split后Scaler / 稀疏列处理
+======================================================================
+
+[STEP 1] 读取数据 & 列名清洗
+  原始数据形状: (4424, 37)
+  列名清洗完成，共 37 列
+  缺失值总数: 0
+
+[STEP 2] 特征工程：构建派生特征
+  age_group 分布: {0: np.int64(2873), 1: np.int64(889), 2: np.int64(437), 3: np.int64(225)}  (0=≤21岁, 1=22-30, 2=31-40, 3=>40)
+  no_eval_sem1=1: 538 条  (12.2%)
+  no_eval_sem2=1: 690 条  (15.6%)
+  pass_rate_sem1 均值: 0.698
+  pass_rate_sem2 均值: 0.660
+  grade_trend 有效计算行数: 3512 条
+  economic_stress=1: 785 条  (17.7%)
+  ✅ 特征工程完成，新增 7 个派生特征
+
+[STEP 3] 高基数变量分组
+  Nacionality_grouped 分布: {0: np.int64(4314), 1: np.int64(32), 2: np.int64(42), 3: np.int64(36)}
+  Mother_qual_grouped 分布: {0: np.int64(136), 1: np.int64(1580), 2: np.int64(2081), 3: np.int64(12), 4: np.int64(615)}
+  Father_qual_grouped 分布: {0: np.int64(127), 1: np.int64(1924), 2: np.int64(1933), 3: np.int64(21), 4: np.int64(419)}
+  prev_qual_ordinal 分布:   {0: np.int64(172), 1: np.int64(3777), 2: np.int64(255), 3: np.int64(56), 4: np.int64(164)}
+  ✅ 分组映射完成
+
+[STEP 4] 去除冗余/极端稀疏特征
+  International 与 非葡萄牙标志 相关系数: 1.000 → 删除 International
+  Application mode 稀疏类别 (2/10/26/27/57) 合并为 99，共 16 条
+  ✅ 冗余列处理完成
+
+[STEP 5] 目标变量编码
+  标签映射: {'Dropout': 0, 'Enrolled': 1, 'Graduate': 2}
+  类别分布: {0: np.int64(1421), 1: np.int64(794), 2: np.int64(2209)}
+  二分类 (Dropout=1): 1421 条
+
+[STEP 6] 独热编码
+  独热编码后形状: (4424, 98)
+  删除原始高基数列后形状: (4424, 91)
+  ✅ 独热编码完成
+
+[STEP 7] 特征/目标分离 & 数据集分割（stratified 70-10-20）
+  X 形状: (4424, 89)   y 形状: (4424,)
+  训练集: (3096, 89)  验证集: (442, 89)  测试集: (886, 89)
+  Train Target分布: {0: 0.321, 1: 0.18, 2: 0.499}
+  Val Target分布: {0: 0.321, 1: 0.179, 2: 0.5}
+  Test Target分布: {0: 0.322, 1: 0.179, 2: 0.499}
+
+[STEP 8] StandardScaler（训练集 fit，测试集/验证集仅 transform）
+  标准化列数: 23
+  保持原值列数（二值/独热）: 66
+  训练集连续列均值范围: -0.000 ~ 0.000  (应接近 0)
+  测试集连续列均值范围: -0.047 ~ 0.060  (允许略偏离 0)
+  ✅ 标准化完成（无数据泄漏）
+
+[STEP 9] 构建完整数据集（供 t-SNE / 聚类分析使用）
+  完整预处理数据形状: (4424, 91)
+
+[STEP 10] 保存文件
+  📁 train_70.csv       — 训练集（含 Target + Target_binary）
+  📁 val_10.csv         — 验证集
+  📁 test_20.csv        — 测试集
+  📁 full_preprocessed_data.csv — 全量数据（供 t-SNE/聚类）
+  📁 label_mapping.json — 标签映射
+  📁 standard_scaler.pkl— Scaler 对象（可复现）
+  📁 feature_names.txt  — 特征名列表
+  📁 scale_cols.txt     — 标准化列名列表
+
+======================================================================
+预处理完成摘要
+======================================================================
+  原始数据:      4424 行 × 37 列
+  最终特征数:    89 列
+  新增派生特征:  7 个（age_group / no_eval×2 / pass_rate×2 / grade_trend / economic_stress / family_edu_capital）
+  删除冗余列:    International（与国籍重叠）/ 原始 Previous qualification / 原始 Age
+  合并稀疏类:    Application mode 中 5 个极稀疏类别合并为 '99-其他渠道'
+  独热编码:      仅对名义类别列执行，二值/连续列保持原值
+  标准化策略:    仅连续/有序列，训练集 fit → 验证/测试集 transform（无泄漏）
+  目标变量:      三分类（0=Dropout, 1=Enrolled, 2=Graduate）+ 二分类版本
+  数据分割:      stratify=y，70% 训练 / 10% 验证 / 20% 测试
+  类别不均衡:    建议建模时加 class_weight='balanced'
+======================================================================
+✅ 全部完成，可直接用于 t-SNE / 聚类 / 监督学习任务
