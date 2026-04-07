@@ -1,0 +1,89 @@
+Application order
+Previous qualification (grade)
+Admission grade
+Displaced
+Educational special needs
+Debtor
+Tuition fees up to date
+Gender
+Scholarship holder
+Curricular units 1st sem (credited)
+Curricular units 1st sem (enrolled)
+Curricular units 1st sem (evaluations)
+Curricular units 1st sem (approved)
+Curricular units 1st sem (grade)
+Curricular units 1st sem (without evaluations)
+Curricular units 2nd sem (credited)
+Curricular units 2nd sem (enrolled)
+Curricular units 2nd sem (evaluations)
+Curricular units 2nd sem (approved)
+Curricular units 2nd sem (grade)
+Curricular units 2nd sem (without evaluations)
+Unemployment rate
+Inflation rate
+GDP
+no_eval_sem1
+no_eval_sem2
+pass_rate_sem1
+pass_rate_sem2
+grade_trend
+economic_stress
+prev_qual_ordinal
+family_edu_capital
+Marital status_2
+Marital status_3
+Marital status_4
+Marital status_5
+Marital status_6
+Application mode_5
+Application mode_7
+Application mode_15
+Application mode_16
+Application mode_17
+Application mode_18
+Application mode_39
+Application mode_42
+Application mode_43
+Application mode_44
+Application mode_51
+Application mode_53
+Application mode_99
+Course_171
+Course_8014
+Course_9003
+Course_9070
+Course_9085
+Course_9119
+Course_9130
+Course_9147
+Course_9238
+Course_9254
+Course_9500
+Course_9556
+Course_9670
+Course_9773
+Course_9853
+Course_9991
+Daytime/evening attendance_1
+Nacionality_grouped_1
+Nacionality_grouped_2
+Nacionality_grouped_3
+Mother_qual_grouped_1
+Mother_qual_grouped_2
+Mother_qual_grouped_3
+Mother_qual_grouped_4
+Father_qual_grouped_1
+Father_qual_grouped_2
+Father_qual_grouped_3
+Father_qual_grouped_4
+Mother_occ_grouped_1
+Mother_occ_grouped_2
+Mother_occ_grouped_3
+Mother_occ_grouped_4
+Father_occ_grouped_1
+Father_occ_grouped_2
+Father_occ_grouped_3
+Father_occ_grouped_4
+age_group_1
+age_group_2
+age_group_3
