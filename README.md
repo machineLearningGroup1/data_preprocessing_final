@@ -1,268 +1,402 @@
-# Task 2 — t-SNE Visualization
+# Task 1 — Data Preprocessing
 
-**脚本:** `task2_tsne.py`  
-**输入:** `full_preprocessed_data.csv`（4,424 × 91）  
-**输出:** 5 张可视化图表（`.png`）
-
----
-
-## 1. t-SNE 核心知识点
-
-### 1.1 什么是 t-SNE
-
-t-SNE（t-distributed Stochastic Neighbor Embedding）是一种**非线性降维算法**，专门用于将高维数据映射到 2D 或 3D 空间进行可视化。与 PCA（线性投影，保留全局方差）不同，t-SNE 重点保留数据点之间的**局部邻近关系**——如果两个点在高维空间中很近，t-SNE 会尽量让它们在低维空间中也保持接近。
-
-### 1.2 算法原理（三步）
-
-**Step 1 — 高维空间：构建条件概率**
-
-对于每对数据点 $(x_i, x_j)$，用高斯分布衡量它们的相似度：
-
-$$
-p_{j|i} = \frac{\exp(-\|x_i - x_j\|^2 / 2\sigma_i^2)}{\sum_{k \neq i} \exp(-\|x_i - x_k\|^2 / 2\sigma_i^2)}
-$$
-
-- $\sigma_i$ 由 **perplexity** 参数控制（见下文）
-- 然后对称化：$p_{ij} = (p_{j|i} + p_{i|j}) / 2n$
-
-**Step 2 — 低维空间：用 t 分布替代高斯**
-
-在 2D 嵌入空间中，用自由度为 1 的 **Student-t 分布**（即柯西分布）计算相似度：
-
-$$
-q_{ij} = \frac{(1 + \|y_i - y_j\|^2)^{-1}}{\sum_{k \neq l} (1 + \|y_k - y_l\|^2)^{-1}}
-$$
-
-为什么用 t 分布而不是高斯？因为 t 分布有**重尾特性**——在低维空间中允许不相似的点之间有更大的距离，从而缓解"拥挤问题"（crowding problem）：高维空间中中等距离的点在低维投影时不会都被挤在一起。
-
-**Step 3 — 最小化 KL 散度**
-
-通过梯度下降最小化高维分布 $P$ 与低维分布 $Q$ 之间的 KL 散度：
-
-$$
-KL(P \| Q) = \sum_{i \neq j} p_{ij} \log \frac{p_{ij}}{q_{ij}}
-$$
-
-KL 散度是不对称的：$p_{ij}$ 大而 $q_{ij}$ 小时惩罚很重（即高维中很近的点在低维中被分开了），反之惩罚较轻。这意味着 t-SNE **优先保证局部结构的忠实度**。
-
-### 1.3 关键参数
-
-| 参数 | 代码中的值 | 含义 |
-|------|-----------|------|
-| `perplexity` | 30 | 有效邻居数量，控制关注局部 vs 全局结构。值越小越关注小尺度结构，越大越平滑 |
-| `max_iter` | 1000 | 梯度下降迭代次数，一般 1000 足够收敛 |
-| `learning_rate` | `'auto'` | 学习率，`auto` 模式下 sklearn 自动设为 $n/12$（约 368） |
-| `init` | `'pca'` | 用 PCA 结果初始化低维坐标，比随机初始化更稳定、收敛更快 |
-| `random_state` | 42 | 固定随机种子，保证结果可复现 |
-
-### 1.4 perplexity 的直觉理解
-
-perplexity 可以理解为"每个点大概关注它最近的多少个邻居"：
-
-- **perplexity = 5**：只关注非常近的邻居，容易形成很多碎片小簇
-- **perplexity = 30**：中等范围，兼顾局部和中尺度结构（推荐默认值）
-- **perplexity = 50**：关注更广的邻域，簇更平滑但可能丢失细节
-
-数学上，perplexity = $2^{H(P_i)}$，其中 $H$ 是 $P_i$ 的香农熵。perplexity 越大，高斯核的 $\sigma_i$ 越大，条件概率分布越平滑。
-
-### 1.5 解读 t-SNE 图的注意事项
-
-| 可信 | 不可信 |
-|------|--------|
-| 同一个簇内部点的邻近关系 | 簇与簇之间的距离大小 |
-| 是否存在清晰可分的分组 | 簇的绝对大小（可能被拉伸/压缩） |
-| 哪些点被归为同一局部区域 | 坐标轴的数值（无物理意义） |
-
-**常见误读：**
-- ❌ "这两个簇距离很远，所以它们差异最大" → 簇间距离不保真
-- ❌ "这个簇比那个大，说明该类样本更分散" → 簇的面积可能是算法伪影
-- ✅ "Graduate 的蓝色点形成了几个明显的聚集区域" → 局部聚集模式可信
-- ✅ "Dropout 和 Enrolled 存在大面积重叠区域" → 边界模糊的判断可信
+**Dataset:** Predict Students' Dropout and Academic Success  
+**Source:** UCI Machine Learning Repository (ID: 697)  
+**Script:** `data_preprocessing.py`  
+**Output:** `full_preprocessed_data.csv` + split files + auxiliary files
 
 ---
 
-## 2. 代码逻辑详解
+## 1. 数据集概览
 
-### 2.1 整体架构
+| 项目 | 数值 |
+|------|------|
+| 原始样本数 | 4,424 |
+| 原始特征数 | 36 |
+| 目标变量类别 | 3（Graduate / Dropout / Enrolled）|
+| 缺失值 | 0（官方已预处理）|
+| 处理后特征数 | **89** |
+| 处理后文件大小 | 4,424 行 × 91 列（含 Target + Target_binary）|
+
+**目标变量分布（类别不均衡）：**
+
+| 类别 | 编码 | 样本数 | 占比 |
+|------|------|--------|------|
+| Graduate | 2 | 2,209 | 49.9% |
+| Dropout  | 0 | 1,421 | 32.1% |
+| Enrolled | 1 | 794   | 18.0% |
+
+---
+
+## 2. 处理流程总览
 
 ```
-task2_tsne.py
+原始 data.csv (4424×37)
     │
-    ├─ Section 0  全局设置（plt样式 / 颜色 / 标记符号）
-    ├─ Section 1  数据读取
-    ├─ Section 2  定义两个特征子集（版本A + 版本B）
-    ├─ Section 3  图1 — 版本A主图（23连续特征，perplexity=30）
-    ├─ Section 4  图2 — 版本A vs 版本B 对比
-    ├─ Section 5  图3 — 按4个关键特征着色（2×2子图）
-    ├─ Section 6  图4 — perplexity 敏感性分析（5 / 30 / 50）
-    └─ Section 7  图5 — 3D t-SNE
+    ├─ Step 1  列名规范化（去除 BOM / Tab 字符）
+    ├─ Step 2  特征工程（新增 8 个派生特征）
+    ├─ Step 3  高基数变量分组映射
+    ├─ Step 4  去除冗余 & 合并极稀疏类别
+    ├─ Step 5  目标变量编码（三分类 + 二分类）
+    ├─ Step 6  独热编码（仅名义类别列）
+    ├─ Step 7  Train / Val / Test 分割（70 / 10 / 20）
+    ├─ Step 8  StandardScaler（仅连续列，训练集 fit）
+    └─ Step 9  保存所有输出文件
+
+输出：full_preprocessed_data.csv (4424×91)
+      train_70.csv / val_10.csv / test_20.csv
 ```
 
-### 2.2 两个特征子集的设计思路
+---
 
-| | 版本 A | 版本 B |
-|---|--------|--------|
-| **特征** | 23 个连续/有序列 | 全部 89 列 |
-| **预处理** | 直接使用（已标准化） | PCA 降至 50 维 |
-| **信噪比** | 高（纯数值特征，信息密度大） | 较低（66 个 0/1 二值列稀释信号） |
-| **PCA 50 解释方差** | — | 98.5% |
-| **适用场景** | 展示学业表现驱动的分布结构 | 展示含人口统计信息的完整数据结构 |
+## 3. 各步骤详细说明
 
-**为什么版本 A 只用 23 列？**
+### Step 1 — 列名规范化
 
-89 个特征中有 66 个是 one-hot 编码的二值列（0/1），这些列在欧氏距离计算中会引入大量"噪声维度"——两个学业表现相似但来自不同课程的学生，可能因为 Course 列不同而被推得很远。版本 A 只保留连续特征，让 t-SNE 聚焦于学业表现和经济背景这些**对退学预测最关键的信号**。
+原始 CSV 文件存在两个列名污染问题：
 
-**为什么版本 B 用 PCA(50) 而不是直接输入 89 维？**
+- 文件开头含有 **BOM 字符**（`\ufeff`），导致第一列名读取异常
+- `Daytime/evening attendance` 列名末尾含有**制表符**（`\t`），独热编码后会污染新列名
 
-t-SNE 的时间复杂度与维度成正比，而且在高维空间中距离度量会退化（维度灾难）。PCA 预降维是 t-SNE 官方文档推荐的做法，50 维保留了 98.5% 的方差，几乎没有信息损失。
-
-### 2.3 图表详解
-
-#### 图 1 — 主 t-SNE 散点图（版本 A）
+处理方式：
 
 ```python
-tsne_vA = TSNE(
-    n_components=2,
-    perplexity=30,
-    max_iter=1000,       # sklearn 1.8+ 改名为 max_iter（旧版为 n_iter）
-    init='pca',          # PCA 初始化，比随机初始化更稳定
-    random_state=42,
-    learning_rate='auto', # auto = n_samples / 12 ≈ 368
-)
-emb_vA = tsne_vA.fit_transform(X_vA)   # 返回 (4424, 2) 的嵌入坐标
-```
-
-绘图时的关键细节：
-- **绘制顺序 `[2, 1, 0]`**：Graduate（最多）先画在底层，Dropout 最后画在最上层，避免少数类被多数类覆盖
-- **`rasterized=True`**：4424 个散点如果保存为矢量格式会很大，光栅化后 PNG 文件更小
-- **`alpha=0.45`**：半透明让重叠区域的颜色混合可见，密度高的地方更深
-- **隐藏刻度标签**：t-SNE 坐标轴数值无物理意义，显示刻度反而误导
-
-#### 图 2 — 版本 A vs 版本 B 对比
-
-左右并排展示两种特征子集的 t-SNE 结果，观察加入 one-hot 类别特征后的变化：
-- 如果版本 B 的类别分离度更差，说明 one-hot 列引入了噪声
-- 如果两者类似，说明核心结构由连续特征主导
-
-#### 图 3 — 按关键特征着色（2×2）
-
-使用**版本 A 的嵌入坐标**（不重新跑 t-SNE），只是改变着色方式：
-
-| 子图 | 特征 | 配色 | 观察目的 |
-|------|------|------|----------|
-| 左上 | 1st sem approved（标准化后） | `viridis`（连续色阶） | 学业表现如何驱动 t-SNE 分布 |
-| 右上 | Tuition fees up to date（0/1） | `RdYlGn`（红→绿） | 学费缴纳状态的空间分布 |
-| 左下 | Scholarship holder（0/1） | `coolwarm`（红蓝对比） | 奖学金持有者在哪些区域聚集 |
-| 右下 | economic_stress（0/1） | `RdYlGn_r`（绿→红） | 经济压力学生的分布模式 |
-
-这里的关键思路是：**同一张 t-SNE 图，用不同特征着色，可以揭示各特征与 Target 的空间关联**。如果某个特征的颜色梯度和 Target 的颜色分布高度对应，说明该特征是区分 Dropout/Graduate 的核心变量。
-
-#### 图 4 — perplexity 敏感性分析
-
-对同一组数据（版本 A）分别用 perplexity = 5 / 30 / 50 运行 t-SNE：
-
-| perplexity | 预期表现 |
-|-----------|----------|
-| 5 | 产生很多小碎片簇，过度强调微观结构 |
-| 30 | 平衡的中尺度结构（推荐默认值） |
-| 50 | 更平滑的大尺度结构，但可能丢失细节 |
-
-这张图证明 t-SNE 结果对 perplexity 的敏感性，说明任何单一参数下的图不应被过度解读。三个 perplexity 下都稳定出现的模式（比如 Graduate 和 Dropout 的分离）才是可信的。
-
-#### 图 5 — 3D t-SNE
-
-使用 `n_components=3`，在 matplotlib 的 3D 投影中展示，提供另一个维度的观察视角。
-
-### 2.4 KL 散度的解读
-
-代码输出中报告了每次 t-SNE 的 KL 散度值：
-- KL 散度是优化目标，越小表示低维嵌入越好地保留了高维邻近关系
-- 版本 A 的 KL = 1.3140，版本 B 的 KL = 1.6444
-- 版本 B 更高说明 89 维数据更难在 2D 中忠实表示（维度更高，信息损失更大）
-- 不同运行之间 KL 值可比，但没有绝对的"好/坏"标准
-
----
-
-## 3. 可视化结果解读
-
-### 3.1 图 1 & 图 2 — 整体分布模式
-
-从 t-SNE 图中可以观察到以下模式：
-
-1. **Graduate（蓝色）形成多个相对紧密的聚集区域**，主要集中在图的上方和右侧区域。这些学生学业表现相似、成绩较好，在特征空间中彼此接近。
-
-2. **Dropout（橙色）在图的左下方形成了比较密集的聚集**，并且在整体上和 Graduate 有一定程度的空间分离。这表明退学学生在学业特征上确实与毕业生有系统性差异。
-
-3. **Enrolled（绿色）散布在 Dropout 和 Graduate 之间**，没有形成独立的聚集区域。这符合直觉——在读学生是一个"中间态"，其中一部分最终会毕业，另一部分可能退学。
-
-4. **存在明显的重叠区域**，尤其是 Enrolled 与其他两类之间。这说明三类学生并非在特征空间中完全可分——部分退学风险学生和在读学生的学业表现可能非常相似。
-
-5. **版本 A vs 版本 B 对比**：版本 A（23 连续特征）的类别分离度通常优于版本 B（全 89 列+PCA50）。这说明学业表现相关的连续特征是区分三类学生的核心信号，而 one-hot 类别特征在 t-SNE 距离计算中引入了额外的"噪声"。
-
-### 3.2 图 3 — 特征着色的发现
-
-- **1st sem approved（左上）**：颜色梯度与 Target 分布高度对应——Dropout 聚集区域为深紫色（通过课程数低），Graduate 聚集区域为亮黄色（通过课程数高）。这直观证实了第一学期通过课程数是最强的退学预测因子之一。
-
-- **Tuition fees up to date（右上）**：少量红色点（学费未按时缴纳）集中在 Dropout 区域，表明经济因素与退学存在空间关联。
-
-- **Scholarship holder（左下）**：奖学金持有者（红色）更多出现在 Graduate 主导的区域。
-
-- **Economic stress（右下）**：经济压力学生（红色）与 Dropout 区域部分重叠，但并非完全对应——说明经济因素是退学的一个贡献因素，但不是唯一因素。
-
-### 3.3 图 4 — perplexity 敏感性
-
-三个 perplexity 值下的共同模式：
-- Graduate 和 Dropout 的基本分离在所有 perplexity 下都成立
-- Enrolled 始终散布在两者之间
-- perplexity = 5 产生更多碎片化的小簇，perplexity = 50 的结构更平滑
-
-这说明上述观察是数据的内在特性，而非 t-SNE 参数的偶然产物。
-
----
-
-## 4. 与 Task 3（聚类）的衔接
-
-Task 2 的 t-SNE 可视化为 Task 3 的聚类分析提供了以下铺垫：
-
-| t-SNE 观察 | 对 Task 3 的指导意义 |
-|------------|---------------------|
-| 数据大致形成 2~3 个视觉上可辨识的聚集区域 | 支持设置 k=3 作为聚类的候选参数 |
-| Graduate 和 Dropout 有一定分离但非完全可分 | 预期聚类指标（ARI/NMI）不会特别高 |
-| Enrolled 散布在两者之间，无独立聚集 | Enrolled 可能被聚类算法分配到其他两类中 |
-| 版本 A（连续特征）的分离度优于版本 B | 聚类时使用 PCA 降维比直接用全部 89 列效果更好 |
-
-**重要：** t-SNE 的 2D 坐标**不应作为聚类的输入**。t-SNE 只保留局部结构，不保全局距离。Task 3 聚类应在 PCA 降维后的原始特征空间上进行，t-SNE 仅用于聚类结果的可视化展示。
-
----
-
-## 5. sklearn 版本兼容性说明
-
-| sklearn 版本 | 参数名 |
-|-------------|--------|
-| ≤ 1.3 | `n_iter=1000` |
-| ≥ 1.4 | `max_iter=1000`（`n_iter` 已弃用） |
-
-本代码中使用 `max_iter`，兼容 sklearn 1.4+。如在旧版本环境运行，需将 `max_iter` 改回 `n_iter`。
-
----
-
-## 6. 环境依赖
-
-```
-pandas >= 2.2.0
-numpy >= 1.26.0
-scikit-learn >= 1.5.0
-matplotlib >= 3.8.0
+df.columns = [c.strip().replace('\t', '').replace('\ufeff', '') for c in df.columns]
 ```
 
 ---
 
-## 7. 输出文件
+### Step 2 — 特征工程
 
-| 文件名 | 内容 | 在报告中的用途 |
-|--------|------|--------------|
-| `fig1_tsne_target_vA.png` | 版本A，按 Target 着色（主图） | 展示数据整体分布结构 |
-| `fig2_tsne_target_vB.png` | 版本A vs 版本B 对比 | 讨论特征选择对可视化的影响 |
-| `fig3_tsne_feature_colors.png` | 按4个关键特征着色（2×2） | 分析各特征与分布结构的关联 |
-| `fig4_tsne_perplexity.png` | perplexity 敏感性分析 | 证明观察的鲁棒性 |
-| `fig5_tsne_3d.png` | 3D t-SNE | 提供额外的可视化维度 |
+在原始 36 个特征基础上，新增 **8 个派生特征**，提升数据的信息密度和模型可解释性。
+
+#### 2.1 年龄生命周期分组 `age_group`
+
+原始 `Age at enrollment` 是连续变量，分布极度右偏（中位数 20 岁，最大值 70 岁），IQR 法检测出 441 个"离群点"（> 34 岁）。这些不是数据错误，而是真实的成人学生（在职继续教育）。
+
+处理策略：**不删除，转化为生命周期阶段**，消除极端值对基于距离算法的杠杆效应。
+
+| 编码 | 区间 | 含义 | 样本数 |
+|------|------|------|--------|
+| 0 | ≤ 21 岁 | 应届生（参照基准，drop_first 后删除）| 2,873 |
+| 1 | 22–30 岁 | 青年学生 | 889 |
+| 2 | 31–40 岁 | 成年学生 | 437 |
+| 3 | > 40 岁  | 大龄学生 | 225 |
+
+#### 2.2 未参评标志 `no_eval_sem1` / `no_eval_sem2`
+
+数据集中第一学期成绩（grade）为 0 的记录有 **718 条（16.2%）**，第二学期有 **870 条（19.7%）**。这些 0 **并非真实的零分**，而是该学生注册了课程但未参加任何考试（evaluations = 0）——即"缺考"。
+
+若直接用 0 参与成绩均值计算，会严重拉低该生的平均分，误导模型。
+
+处理策略：**构建布尔标志变量，保留原始 0 值**。
+
+```
+no_eval_sem1 = 1  当 enrolled > 0 且 grade == 0
+```
+
+| 特征 | 正例数 | 正例率 |
+|------|--------|--------|
+| `no_eval_sem1` | 538 | 12.2% |
+| `no_eval_sem2` | 690 | 15.6% |
+
+经验证：第一学期 approved = 0 的 718 条记录中，**79.4% 最终 Dropout**，这是数据集中最强的早期退学信号之一。
+
+#### 2.3 课程通过率 `pass_rate_sem1` / `pass_rate_sem2`
+
+原始 `approved`（通过课程数）的绝对值受注册门数影响：注册 2 门通过 2 门，与注册 8 门通过 2 门，信号完全不同。
+
+处理策略：**构建相对通过率**，消除注册门数差异。
+
+```
+pass_rate_sem1 = approved_1st / enrolled_1st
+                （enrolled = 0 时填 0，clip 到 [0, 1]）
+```
+
+| 特征 | 均值（标准化前）|
+|------|----------------|
+| `pass_rate_sem1` | 0.698 |
+| `pass_rate_sem2` | 0.660 |
+
+#### 2.4 成绩变化趋势 `grade_trend`
+
+捕捉学生在两个学期之间的学业进步或退步趋势，对识别"开始好后来差"的潜在退学风险有价值。
+
+```
+grade_trend = grade_2nd - grade_1st
+             （仅对两学期均有成绩的 3,512 条计算，其余填 0）
+```
+
+正值表示进步，负值表示退步。
+
+#### 2.5 经济压力综合标志 `economic_stress`
+
+`Debtor`（有债务）和 `Tuition fees up to date`（学费未按时缴纳）均反映经济困难，两者相关系数为 -0.408。将其合并为一个综合经济压力指标：
+
+```
+economic_stress = 1  当 Debtor == 1 OR Tuition fees up to date == 0
+```
+
+正例数：785 条（17.7%）
+
+#### 2.6 前置学历有序映射 `prev_qual_ordinal`
+
+原始 `Previous qualification` 有 17 种编码，但编码值顺序并非按学历升序排列（如编码 19 = 初中，编码 6 = 在读高等教育）。旧版直接作为数值使用，存在语义错误。
+
+新版按实际教育层次**手动重映射为 0–4 有序整数**：
+
+| 有序值 | 含义 | 原始编码 |
+|--------|------|----------|
+| 0 | 基础教育（初中及以下）| 14, 15, 19, 38 |
+| 1 | 高中（完成或未完成）  | 1, 9, 10, 12（最多，3,777 条）|
+| 2 | 技术 / 专科          | 39, 42 |
+| 3 | 大专 / 本科在读       | 6, 40 |
+| 4 | 本科及以上           | 2, 3, 4, 5, 43 |
+
+#### 2.7 家庭教育资本 `family_edu_capital`
+
+父母学历分组完成后，取均值构建家庭教育资本综合指标，反映家庭背景对学业的系统性影响：
+
+```
+family_edu_capital = (Mother_qual_grouped + Father_qual_grouped) / 2
+```
+
+---
+
+### Step 3 — 高基数变量分组
+
+直接对高基数类别列做独热编码会产生极度稀疏矩阵，降低模型效果。采用**领域知识分组再独热**的两阶段策略：
+
+| 原始列 | 原始类别数 | 分组后类别数 | 分组依据 |
+|--------|-----------|-------------|----------|
+| `Nacionality` | 21 种 | 5 组 | 地理区域（葡萄牙 / 欧洲 / 美洲 / 非洲葡语国 / 其他）|
+| `Mother's qualification` | 29 种 | 5 组 | 教育层次（文盲→高等教育）|
+| `Father's qualification` | 34 种 | 5 组 | 教育层次（同上）|
+| `Mother's occupation` | 32 种 | 5 组 | 职业类别（无业 / 管理 / 专业 / 中级 / 蓝领）|
+| `Father's occupation` | 46 种 | 5 组 | 职业类别（同上）|
+
+---
+
+### Step 4 — 去除冗余 & 合并稀疏类别
+
+**删除 `International`（与国籍完全重叠）：**
+
+`International` 与"非葡萄牙"标志的相关系数实测为 **1.000**，完全线性冗余。保留国籍分组（信息更丰富），删除 `International`。
+
+**合并极稀疏 Application mode 类别：**
+
+以下 5 个类别各自样本数 ≤ 10 条（正例率 < 0.25%），独热后经 StandardScaler 会产生 z-score ≥ 21 的异常值，对基于距离的算法造成极强干扰：
+
+| 类别编码 | 含义 | 样本数 |
+|---------|------|--------|
+| 2  | Ordinance No. 612/93 | 3 |
+| 10 | Ordinance No. 854-B/99 | 10 |
+| 26 | Ordinance No. 533-A/99 (b2) | 1 |
+| 27 | Ordinance No. 533-A/99 (b3) | 1 |
+| 57 | Change of institution/course (International) | 1 |
+
+处理方式：合并为 `Application mode = 99`（其他特殊渠道），共 16 条。
+
+---
+
+### Step 5 — 目标变量编码
+
+使用 `LabelEncoder` 按字母顺序编码（非 OneHotEncoder，与 sklearn 分类器完全兼容）：
+
+| 原始标签 | 编码 | 样本数 |
+|----------|------|--------|
+| Dropout  | 0 | 1,421 |
+| Enrolled | 1 | 794   |
+| Graduate | 2 | 2,209 |
+
+同时生成**二分类版本** `Target_binary`（Dropout = 1，非 Dropout = 0），方便 Task 4 同时做三分类和二分类对比实验，无需重新运行预处理。
+
+---
+
+### Step 6 — 独热编码
+
+**仅对名义类别列**执行独热编码，连续列和二值列不参与，避免极端 z-score 问题（旧版对所有列统一 StandardScaler 的核心问题）。
+
+全部使用 `drop_first=True` 避免虚拟变量陷阱（完全多重共线性）：
+
+| 列名 | 类别数 | 独热后列数 | 基准类（被 drop 的）|
+|------|--------|-----------|---------------------|
+| `Marital status` | 6 | 5 | 1（单身，占 88.6%）|
+| `Application mode` | 14 | 13 | 1（第一志愿，占 38.6%）|
+| `Course` | 17 | 16 | 33（生物燃料技术）|
+| `Daytime/evening attendance` | 2 | 1 | 0（晚课）|
+| `Nacionality_grouped` | 5 | 4 | 0（葡萄牙，占 97.5%）|
+| `Mother_qual_grouped` | 5 | 4 | 0（文盲/未知）|
+| `Father_qual_grouped` | 5 | 4 | 0（文盲/未知）|
+| `Mother_occ_grouped` | 5 | 4 | 0（无业/未知）|
+| `Father_occ_grouped` | 5 | 4 | 0（无业/未知）|
+| `age_group` | 4 | 3 | 0（≤ 21 岁，应届生）|
+
+---
+
+### Step 7 — 数据集分割
+
+采用**分层抽样**（`stratify=y`），保证三个类别在训练 / 验证 / 测试集中的比例完全一致：
+
+| 集合 | 样本数 | Dropout | Enrolled | Graduate |
+|------|--------|---------|----------|----------|
+| 训练集（70%）| 3,096 | 32.1% | 18.0% | 49.9% |
+| 验证集（10%）| 442   | 32.1% | 17.9% | 50.0% |
+| 测试集（20%）| 886   | 32.2% | 17.9% | 49.9% |
+
+分两步完成：先 70% / 30% 拆分，再将 30% 中的 1/3 作为验证集、2/3 作为测试集。
+
+---
+
+### Step 8 — 标准化（无数据泄漏）
+
+**关键改进：Scaler 在分割之后才 fit，且仅在训练集上 fit。**
+
+```python
+scaler = StandardScaler()
+X_train[scale_cols] = scaler.fit_transform(X_train[scale_cols])  # fit + transform
+X_val[scale_cols]   = scaler.transform(X_val[scale_cols])        # 仅 transform
+X_test[scale_cols]  = scaler.transform(X_test[scale_cols])       # 仅 transform
+```
+
+**仅对连续 / 有序列标准化**（`nunique > 2`），共 **23 列**；二值列和独热列（`nunique ≤ 2`）保持 0/1 原值，共 **66 列**：
+
+需标准化的 23 列包括：
+
+- 学业表现（12 列）：两学期的 enrolled / evaluations / approved / grade / credited / without_eval
+- 入学背景（3 列）：`Application order` / `Previous qualification (grade)` / `Admission grade`
+- 宏观经济（3 列）：`Unemployment rate` / `Inflation rate` / `GDP`
+- 派生特征（5 列）：`pass_rate_sem1/2` / `grade_trend` / `prev_qual_ordinal` / `family_edu_capital`
+
+---
+
+## 4. 与旧版 `dataclean.py` 的对比
+
+| 检查项 | 旧版 `dataclean.py` | 新版 `data_preprocessing.py` | 改进说明 |
+|--------|---------------------|-------------------------------|----------|
+| **列名清洗** | 硬编码 `"Daytime/evening attendance\t"` | 读取后统一 `strip()` + `replace('\t', '')` | 消除列名污染，后续代码更健壮 |
+| **年龄处理** | 直接标准化（连续值，最大值 70 岁）| 分为 4 个生命周期阶段，one-hot 编码 | 消除 441 个离群点的杠杆效应 |
+| **grade = 0 处理** | 直接参与计算，当作真实 0 分 | 构建 `no_eval_sem1/2` 布尔标志 | 正确区分"缺考"与"真实零分" |
+| **派生特征** | 无 | 新增 8 个（通过率 / 趋势 / 压力等）| 提升信息密度，增强模型可解释性 |
+| **`Previous qualification` 处理** | 原始编码直接作为数值（顺序错误）| 按学历层次重映射为 0–4 有序整数 | 修正语义错误，编码顺序与学历对应 |
+| **`International` 列** | 保留（与国籍高度重叠）| 删除（相关系数 = 1.000）| 消除完全冗余特征 |
+| **Application mode 稀疏类** | 直接独热（产生 z-score=66）| 合并为"99-其他渠道" | 避免极端 z-score 干扰距离计算 |
+| **StandardScaler 范围** | 对全部 85 列（含独热列）统一 StandardScaler | 仅对 23 个连续 / 有序列标准化 | 独热列保持 0/1，避免极端 z-score |
+| **数据泄漏** | `scaler.fit_transform(X_all)` 在分割前执行 | 分割后在训练集 `fit`，其余仅 `transform` | 符合严格的无数据泄漏规范 |
+| **目标变量** | 仅三分类编码 | 同时输出三分类 + 二分类（`Target_binary`）| 方便 Task 4 同时做两种实验 |
+| **最终特征数** | 85 列 | **89 列** | 净增 4 列（删 2 增派生 8，独热合并减少）|
+
+---
+
+## 5. 输出文件说明
+
+| 文件名 | 内容 | 用途 |
+|--------|------|------|
+| `full_preprocessed_data.csv` | 全量 4424 条，89 特征 + Target + Target_binary | t-SNE 可视化 / 聚类分析 |
+| `train_70.csv` | 3,096 条训练集 | Task 4 模型训练 |
+| `val_10.csv` | 442 条验证集 | Task 5 超参数调优 |
+| `test_20.csv` | 886 条测试集 | Task 4/5 最终评估 |
+| `standard_scaler.pkl` | 训练集 fit 的 Scaler 对象 | 新样本预测时复用 |
+| `label_mapping.json` | `{"Dropout": 0, "Enrolled": 1, "Graduate": 2}` | 结果可解读 |
+| `feature_names.txt` | 89 个特征名列表 | 特征索引参考 |
+| `scale_cols.txt` | 23 个标准化列名 | 确认哪些列被标准化 |
+| `preprocessing_log.txt` | 完整运行日志 | 调试 / 复现 |
+
+---
+
+## 6. 后续任务使用指引
+
+### Task 2 — t-SNE 可视化
+
+```python
+import pandas as pd
+
+df = pd.read_csv("full_preprocessed_data.csv")
+X = df.drop(columns=["Target", "Target_binary"])
+y = df["Target"]
+
+# 推荐仅用高预测力连续特征，图形更清晰
+core_features = [
+    "Curricular units 1st sem (approved)", "Curricular units 1st sem (grade)",
+    "Curricular units 2nd sem (approved)", "Curricular units 2nd sem (grade)",
+    "pass_rate_sem1", "pass_rate_sem2", "grade_trend",
+    "Admission grade", "Tuition fees up to date", "economic_stress"
+]
+X_tsne = df[core_features]
+```
+
+### Task 3 — 聚类分析
+
+```python
+# 使用全量特征，全量样本（无需 train/test 区分）
+X_cluster = df.drop(columns=["Target", "Target_binary"])
+```
+
+### Task 4 — 监督学习
+
+```python
+import pandas as pd
+
+train = pd.read_csv("train_70.csv")
+test  = pd.read_csv("test_20.csv")
+
+X_train = train.drop(columns=["Target", "Target_binary"])
+y_train = train["Target"]          # 三分类
+X_test  = test.drop(columns=["Target", "Target_binary"])
+y_test  = test["Target"]
+
+# 类别不均衡处理：建模时传入
+from sklearn.tree import DecisionTreeClassifier
+model = DecisionTreeClassifier(class_weight="balanced", random_state=42)
+```
+
+### Task 5 — 验证集使用
+
+```python
+val = pd.read_csv("val_10.csv")
+X_val = val.drop(columns=["Target", "Target_binary"])
+y_val = val["Target"]
+# 用于超参数调优 / cross-validation
+```
+
+---
+
+## 7. 环境依赖
+
+```
+pandas>=2.2.0
+numpy>=1.26.0
+scikit-learn>=1.5.0
+joblib>=1.4.0
+matplotlib>=3.8.0
+seaborn>=0.13.0
+jupyter>=1.0.0
+ipykernel>=6.29.0
+imbalanced-learn>=0.12.0
+```
+
+安装命令：
+
+```bash
+pip install pandas numpy scikit-learn joblib matplotlib seaborn jupyter ipykernel imbalanced-learn
+```
+
+---
+
+## 8. 复现步骤
+
+```bash
+# 1. 激活环境
+conda activate dsaa_ml
+
+# 2. 确保 data.csv 与脚本在同一目录
+ls data.csv data_preprocessing.py
+
+# 3. 运行预处理
+python data_preprocessing.py
+
+# 4. 检查输出
+ls *.csv *.pkl *.json *.txt
+```
+
+所有随机操作均设置 `random_state=42`，结果完全可复现。
